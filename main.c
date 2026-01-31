@@ -28,8 +28,9 @@ typedef enum {
 
 typedef struct {
     uint32_t id;
-    char username[COLUMN_USERNAME_SIZE];
-    char email[COLUMN_EMAIL_SIZE];
+    // adding 1 for null terminator
+    char username[COLUMN_USERNAME_SIZE + 1];
+    char email[COLUMN_EMAIL_SIZE + 1];
 } Row;
 
 typedef struct {
@@ -39,6 +40,8 @@ typedef struct {
 
 typedef enum {
     PREPARE_SUCESS,
+    PREPARE_NEGATIVE_ID,
+    PREPARE_STRING_TOO_LONG,
     PREPARE_UNRECOGNIZED_STATEMENT,
     PREPARE_SYNTAX_ERROR
 } PrepareResult;
@@ -125,18 +128,33 @@ void* row_slot(Table* table, uint32_t row_num) {
     return page + byte_offset;
 }
 
+PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement) {
+    char *keyword = strtok(input_buffer->buffer, " ");
+    char *id_string = strtok(NULL, " ");
+    char *username = strtok(NULL, " ");
+    char *email = strtok(NULL, " ");
+
+    if(id_string == NULL || username == NULL || email == NULL) {
+        return PREPARE_SYNTAX_ERROR;
+    } 
+    int id = atoi(id_string);
+    if(id < 0) {
+        return PREPARE_NEGATIVE_ID;
+    }
+    if(strlen(username) > 32 || strlen(email) > 255) {
+        return PREPARE_STRING_TOO_LONG;
+    }
+    statement->row_to_insert.id = id;
+    strcpy(statement->row_to_insert.username, username);
+    strcpy(statement->row_to_insert.email, email);
+    return PREPARE_SUCESS;
+    
+}
+
 PrepareResult prepare_statment(InputBuffer *input_buffer, Statement *statement) {
     if(strncmp(input_buffer->buffer, "insert", 6) == 0) {
         statement->type = STATEMENT_INSERT;
-        int args_assigned = sscanf(input_buffer->buffer,
-                                "insert %u %s %s",
-                                &(statement->row_to_insert.id),
-                                statement->row_to_insert.username,
-                                statement->row_to_insert.email);
-        if(args_assigned < 3) {
-            return PREPARE_SYNTAX_ERROR;
-        }
-        return PREPARE_SUCESS;
+        return prepare_insert(input_buffer, statement);
     }
     if(strncmp(input_buffer->buffer, "select", 6) == 0) {
         statement->type = STATEMENT_SELECT;
@@ -213,8 +231,15 @@ int main(int argc, char *argv[]) {
         switch (prepare_statment(input_buffer, &statement)) {
             case PREPARE_SUCESS:
                 break;
+            case PREPARE_NEGATIVE_ID:
+                printf("Id can't be negative.\n");
+                continue;
+            case PREPARE_STRING_TOO_LONG:
+                printf("String is too long.\n");
+                continue;
             case PREPARE_SYNTAX_ERROR:
                 printf("Syntax error. Could not parse statement.\n");
+                continue;
             case PREPARE_UNRECOGNIZED_STATEMENT: 
                 printf("Unrecognized keyword at start of %s.\n", input_buffer->buffer);
                 continue;
